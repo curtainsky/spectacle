@@ -140,13 +140,17 @@ static const NSEventModifierFlags kCocoaModifierFlagsMask = (NSEventModifierFlag
   [self setNeedsDisplay:YES];
 }
 
-- (void)drawRect:(NSRect)rect
+- (void)drawRect:(NSRect)dirtyRect
 {
-  CGFloat radius = NSHeight(rect) / 2.0f;
-  [self _drawBorderInRect:rect withRadius:radius];
-  [self _drawBackgroundInRect:rect withRadius:radius];
-  [self _drawBadgeInRect:rect];
-  [self _drawLabelInRect:rect];
+  // Draw using the view's bounds instead of the dirty rect: on recent versions of macOS the
+  // dirty rect is not guaranteed to match the view's bounds (the window may hand us the whole
+  // content rect), which used to produce a giant rounded rectangle instead of a small pill.
+  NSRect bounds = self.bounds;
+  CGFloat radius = NSHeight(bounds) / 2.0f;
+  [self _drawBorderInRect:bounds withRadius:radius];
+  [self _drawBackgroundInRect:bounds withRadius:radius];
+  [self _drawBadgeInRect:bounds];
+  [self _drawLabelInRect:bounds];
 }
 
 - (void)_startRecording
@@ -307,11 +311,17 @@ static const NSEventModifierFlags kCocoaModifierFlagsMask = (NSEventModifierFlag
 
 - (void)_drawString:(NSString *)string inRect:(NSRect)rect
 {
+  if (string.length == 0) {
+    return;
+  }
   NSMutableDictionary<NSString *, id> *attributes = stringAttributesWithShadow();
-  NSRect labelRect = rect;
   attributes[NSFontAttributeName] = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
   attributes[NSForegroundColorAttributeName] = [NSColor blackColor];
-  labelRect.origin.y = -(NSMidY(rect) - [string sizeWithAttributes:attributes].height / 2.0f);
+  NSSize stringSize = [string sizeWithAttributes:attributes];
+  NSRect labelRect = NSMakeRect(NSMinX(rect) + 4.0f,
+                                NSMidY(rect) - stringSize.height / 2.0f,
+                                MAX(NSWidth(rect) - 8.0f, stringSize.width),
+                                stringSize.height);
   [string drawInRect:labelRect withAttributes:attributes];
 }
 
