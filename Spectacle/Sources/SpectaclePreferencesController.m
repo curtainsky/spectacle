@@ -37,7 +37,7 @@
 - (void)windowDidLoad
 {
   NSNotificationCenter *notificationCenter = [NSNotificationCenter defaultCenter];
-  NSInteger loginItemEnabledState = NSOffState;
+  NSInteger loginItemEnabledState = NSControlStateValueOff;
   BOOL isStatusItemEnabled = [NSUserDefaults.standardUserDefaults boolForKey:@"StatusItemEnabled"];
   _shortcutRecorders = @{
                          @"MoveToCenter": _moveToCenterShortcutRecorder,
@@ -69,7 +69,7 @@
                              name:@"SpectacleRestoreDefaultShortcutsNotification"
                            object:nil];
   if ([SpectacleLoginItemHelper isLoginItemEnabledForBundle:NSBundle.mainBundle]) {
-    loginItemEnabledState = NSOnState;
+    loginItemEnabledState = NSControlStateValueOn;
   }
   self.loginItemEnabled.state = loginItemEnabledState;
   [self.statusItemEnabled selectItemWithTag:isStatusItemEnabled ? 0 : 1];
@@ -144,7 +144,7 @@ didClearExistingShortcut:(SpectacleShortcut *)shortcut
 - (IBAction)toggleLoginItem:(id)sender
 {
   NSBundle *applicationBundle = NSBundle.mainBundle;
-  if (self.loginItemEnabled.state == NSOnState) {
+  if (self.loginItemEnabled.state == NSControlStateValueOn) {
     [SpectacleLoginItemHelper enableLoginItemForBundle:applicationBundle];
   } else {
     [SpectacleLoginItemHelper disableLoginItemForBundle:applicationBundle];

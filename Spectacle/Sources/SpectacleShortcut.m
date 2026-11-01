@@ -55,9 +55,14 @@
                                           shortcutAction:shortcutAction];
 }
 
++ (BOOL)supportsSecureCoding
+{
+  return YES;
+}
+
 - (instancetype)initWithCoder:(NSCoder *)coder
 {
-  return [self initWithShortcutName:[coder decodeObjectForKey:@"name"]
+  return [self initWithShortcutName:[coder decodeObjectOfClass:[NSString class] forKey:@"name"]
                     shortcutKeyCode:[coder decodeIntegerForKey:@"keyCode"]
                   shortcutModifiers:[coder decodeIntegerForKey:@"modifiers"]];
 }
@@ -169,10 +174,10 @@
 
 + (BOOL)validCocoaModifiers:(NSUInteger)modifiers
 {
-  return ((modifiers & NSAlternateKeyMask)
-          || (modifiers & NSCommandKeyMask)
-          || (modifiers & NSControlKeyMask)
-          || (modifiers & NSShiftKeyMask));
+  return ((modifiers & NSEventModifierFlagOption)
+          || (modifiers & NSEventModifierFlagCommand)
+          || (modifiers & NSEventModifierFlagControl)
+          || (modifiers & NSEventModifierFlagShift));
 }
 
 @end

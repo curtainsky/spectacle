@@ -7,7 +7,7 @@
 
 typedef void(^SpectacleShortcutAction)(SpectacleShortcut *);
 
-@interface SpectacleShortcut : NSObject <NSCoding>
+@interface SpectacleShortcut : NSObject <NSSecureCoding>
 
 @property (nonatomic, readonly, copy) NSString *shortcutName;
 @property (nonatomic, readonly, assign) NSInteger shortcutKeyCode;

@@ -81,16 +81,16 @@ NSString *SpectacleTranslateModifiers(NSUInteger modifiers)
 {
   NSString *modifierGlyphs = @"";
   modifiers = SpectacleConvertModifiersToCocoaIfNecessary(modifiers);
-  if (modifiers & NSControlKeyMask) {
+  if (modifiers & NSEventModifierFlagControl) {
     modifierGlyphs = [modifierGlyphs stringByAppendingFormat:@"%C", (UInt16)kControlUnicode];
   }
-  if (modifiers & NSAlternateKeyMask) {
+  if (modifiers & NSEventModifierFlagOption) {
     modifierGlyphs = [modifierGlyphs stringByAppendingFormat:@"%C", (UInt16)kOptionUnicode];
   }
-  if (modifiers & NSShiftKeyMask) {
+  if (modifiers & NSEventModifierFlagShift) {
     modifierGlyphs = [modifierGlyphs stringByAppendingFormat:@"%C", (UInt16)kShiftUnicode];
   }
-  if (modifiers & NSCommandKeyMask) {
+  if (modifiers & NSEventModifierFlagCommand) {
     modifierGlyphs = [modifierGlyphs stringByAppendingFormat:@"%C", (UInt16)kCommandUnicode];
   }
   return modifierGlyphs;
@@ -106,16 +106,16 @@ NSString *SpectacleTranslateShortcut(SpectacleShortcut *shortcut)
 NSUInteger SpectacleConvertCocoaModifiersToCarbon(NSUInteger modifiers)
 {
   NSUInteger convertedModifiers = 0;
-  if (modifiers & NSControlKeyMask) {
+  if (modifiers & NSEventModifierFlagControl) {
     convertedModifiers |= controlKey;
   }
-  if (modifiers & NSAlternateKeyMask) {
+  if (modifiers & NSEventModifierFlagOption) {
     convertedModifiers |= optionKey;
   }
-  if (modifiers & NSShiftKeyMask) {
+  if (modifiers & NSEventModifierFlagShift) {
     convertedModifiers |= shiftKey;
   }
-  if (modifiers & NSCommandKeyMask) {
+  if (modifiers & NSEventModifierFlagCommand) {
     convertedModifiers |= cmdKey;
   }
   return convertedModifiers;
@@ -125,16 +125,16 @@ NSUInteger SpectacleConvertCarbonModifiersToCocoa(NSUInteger modifiers)
 {
   NSUInteger convertedModifiers = 0;
   if (modifiers & controlKey) {
-    convertedModifiers |= NSControlKeyMask;
+    convertedModifiers |= NSEventModifierFlagControl;
   }
   if (modifiers & optionKey) {
-    convertedModifiers |= NSAlternateKeyMask;
+    convertedModifiers |= NSEventModifierFlagOption;
   }
   if (modifiers & shiftKey) {
-    convertedModifiers |= NSShiftKeyMask;
+    convertedModifiers |= NSEventModifierFlagShift;
   }
   if (modifiers & cmdKey) {
-    convertedModifiers |= NSCommandKeyMask;
+    convertedModifiers |= NSEventModifierFlagCommand;
   }
   return convertedModifiers;
 }

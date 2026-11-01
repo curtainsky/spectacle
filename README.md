@@ -1,20 +1,39 @@
 # Spectacle
 
-[![Build Status](https://travis-ci.org/eczarny/spectacle.svg?branch=master)](https://travis-ci.org/eczarny/spectacle)
-
 Easily organize windows without using a mouse.
+
+## About this fork
+
+This is a maintenance fork of [eczarny/spectacle](https://github.com/eczarny/spectacle) that keeps the app
+building and running on current versions of macOS (Ventura and later, Apple silicon and Intel).
+
+The upstream project has been archived for years, and the last official build no longer works on modern
+systems. The work here is deliberately conservative: the window-management behaviour is untouched, only the
+things that Apple has removed or deprecated over the last decade have been replaced.
+
+What changed:
+
+| Area | Before | Now |
+|:--|:--|:--|
+| Build | Xcode 8 / macOS 10.9 deployment target | Builds with Xcode 26+ / macOS 13 deployment target, universal (arm64 + x86_64) |
+| Updates | Sparkle 1.22 (removed dependency, dead DSA appcast) | Lightweight GitHub Releases check, no third-party dependency |
+| Login item | `LSSharedFileList` (unsupported since 10.11) | `SMAppService` |
+| Shortcut storage | Insecure `NSKeyedArchiver` | `NSSecureCoding`, still able to read data written by older versions |
+| Accessibility prompt | Opened the removed "Security" preference pane | Opens System Settings › Privacy & Security › Accessibility via deep link |
+| Deprecated API | `NSCommandKeyMask`, `NSOnState`, `NSWindow.highlightMode`, … | Modern equivalents |
 
 ## Important Note
 
-**This project is not being actively maintained.** Unfortunately, after almost a decade of on-and-off development I can no longer dedicate the time needed to be a responsible maintainer of this project. Spectacle will remain available for download but please use at your own risk. The source code will continue to be free and open to anyone, so feel free to make Spectacle your own.
-
-Thanks to all the folks that have made Spectacle the first app they install a new Mac!
+The original project is not being actively maintained by its author. Spectacle remains free and open source;
+feel free to make it your own.
 
 _Spectacle users have recommended [Rectangle](https://github.com/rxhanson/Rectangle) as an open source alternative._
 
 ## System requirements
 
-Spectacle [0.8.6][1] is the last version to support Mac OS X 10.7; future releases will only support 10.9 or greater. Folks wishing to stay on 10.7 should download [0.8.6][1]. Those looking for a version of Spectacle that supports 10.6 can still download [0.7][2].
+Spectacle requires macOS 13 (Ventura) or later and runs natively on both Apple silicon and Intel Macs.
+
+Users on older versions of macOS should use the last release published by the upstream project.
 
 ## Keyboard Shortcuts
 
@@ -85,15 +104,18 @@ Most applications built with the Cocoa frameworks can be readily manipulated via
 
 ## Building and running
 
-Spectacle uses [Carthage][5]. Before building Spectacle in Xcode run:
+The app itself has no third-party dependencies. Open the Xcode project and press &#8984;R, or build from the
+command line:
+
+    $ xcodebuild -project Spectacle.xcodeproj -target Spectacle -configuration Release build
+
+The built app ends up in `build/Release/Spectacle.app`. Move it to `/Applications`, launch it, and grant
+accessibility access when prompted (System Settings › Privacy & Security › Accessibility).
+
+The unit tests still use [Carthage][5]:
 
     $ carthage bootstrap --platform Mac
-
-Once Carthage builds Spectacle's dependencies open the Xcode project:
-
-    $ open Spectacle.xcodeproj
-
-After Xcode finishes loading the workspace press &#8984;R to run Spectacle.
+    $ xcodebuild -project Spectacle.xcodeproj -scheme Spectacle test
 
 # License
 

@@ -1,13 +1,15 @@
 #import "SpectacleShortcutUserDefaultsStorage.h"
 
-@implementation SpectacleShortcutUserDefaultsStorage
+#import "SpectacleShortcut.h"
 
-+ (void)initialize
+static void SpectacleApplyLegacyShortcutClassMappings(NSKeyedUnarchiver *unarchiver)
 {
-  [NSKeyedUnarchiver setClass:[SpectacleShortcut class] forClassName:@"SpectacleHotKey"];
-  [NSKeyedUnarchiver setClass:[SpectacleShortcut class] forClassName:@"ZeroKitHotKey"];
-  [NSKeyedUnarchiver setClass:[SpectacleShortcut class] forClassName:@"ZKHotKey"];
+  [unarchiver setClass:[SpectacleShortcut class] forClassName:@"SpectacleHotKey"];
+  [unarchiver setClass:[SpectacleShortcut class] forClassName:@"ZeroKitHotKey"];
+  [unarchiver setClass:[SpectacleShortcut class] forClassName:@"ZKHotKey"];
 }
+
+@implementation SpectacleShortcutUserDefaultsStorage
 
 - (NSArray<SpectacleShortcut *> *)loadShortcutsWithAction:(SpectacleShortcutAction)action
 {
@@ -23,7 +25,12 @@
 {
   NSUserDefaults *userDefaults = [NSUserDefaults standardUserDefaults];
   for (SpectacleShortcut *shortcut in shortcuts) {
-    NSData *shortcutData = [NSKeyedArchiver archivedDataWithRootObject:shortcut];
+    NSError *error = nil;
+    NSData *shortcutData = [NSKeyedArchiver archivedDataWithRootObject:shortcut requiringSecureCoding:YES error:&error];
+    if (!shortcutData) {
+      NSLog(@"Unable to archive shortcut %@; reason %@", shortcut.shortcutName, error.localizedDescription);
+      continue;
+    }
     NSString *shortcutName = shortcut.shortcutName;
     if (![shortcutData isEqualToData:[userDefaults dataForKey:shortcutName]]) {
       [userDefaults setObject:shortcutData forKey:shortcutName];
@@ -65,10 +72,31 @@
 {
   NSMutableArray<SpectacleShortcut *> *shortcuts = [NSMutableArray new];
   for (NSData *shortcutData in dictionary.allValues) {
-    SpectacleShortcut *shortcut = [NSKeyedUnarchiver unarchiveObjectWithData:shortcutData];
-    [shortcuts addObject:[shortcut copyWithShortcutAction:action]];
+    SpectacleShortcut *shortcut = [self shortcutFromData:shortcutData];
+    if (shortcut) {
+      [shortcuts addObject:[shortcut copyWithShortcutAction:action]];
+    }
   }
   return shortcuts;
+}
+
+- (SpectacleShortcut *)shortcutFromData:(NSData *)shortcutData
+{
+  if (shortcutData.length == 0) {
+    return nil;
+  }
+  NSError *error = nil;
+  NSKeyedUnarchiver *unarchiver = [[NSKeyedUnarchiver alloc] initForReadingFromData:shortcutData error:&error];
+  if (!unarchiver) {
+    NSLog(@"Unable to read the archived shortcut; reason %@", error.localizedDescription);
+    return nil;
+  }
+  SpectacleApplyLegacyShortcutClassMappings(unarchiver);
+  // Shortcuts written by older versions of Spectacle were archived without secure coding.
+  unarchiver.requiresSecureCoding = NO;
+  id shortcut = [unarchiver decodeObjectOfClass:[SpectacleShortcut class] forKey:NSKeyedArchiveRootObjectKey];
+  [unarchiver finishDecoding];
+  return [shortcut isKindOfClass:[SpectacleShortcut class]] ? shortcut : nil;
 }
 
 @end

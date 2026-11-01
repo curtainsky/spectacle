@@ -22,14 +22,14 @@
 + (void)displayRunningInBackgroundAlertWithCallback:(void (^)(BOOL, BOOL))callback
 {
   NSAlert *alert = [NSAlert new];
-  alert.alertStyle = NSInformationalAlertStyle;
+  alert.alertStyle = NSAlertStyleInformational;
   alert.showsSuppressionButton = YES;
   alert.messageText = NSLocalizedString(@"AlertMessageTextRunningInBackground", @"The message text of the alert displayed when prompting to run Spectacle in the background");
   alert.informativeText = NSLocalizedString(@"AlertInformativeTextRunningInBackground", @"The informative text of the alert displayed when prompting to run Spectacle in the background");
   [alert addButtonWithTitle:NSLocalizedString(@"ButtonLabelAffirmative", @"The button label used in the affirmative")];
   [alert addButtonWithTitle:NSLocalizedString(@"ButtonLabelNegative", @"The button label used in the negative")];
   NSInteger response = [alert runModal];
-  BOOL isAlertSuppressed = [alert.suppressionButton state] == NSOnState;
+  BOOL isAlertSuppressed = [alert.suppressionButton state] == NSControlStateValueOn;
   switch (response) {
     case NSAlertFirstButtonReturn:
       callback(YES, isAlertSuppressed);

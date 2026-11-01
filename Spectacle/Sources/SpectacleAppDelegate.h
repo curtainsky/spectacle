@@ -52,4 +52,6 @@
 
 - (IBAction)openSystemPreferences:(id)sender;
 
+- (IBAction)checkForUpdates:(id)sender;
+
 @end
