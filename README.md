@@ -82,9 +82,24 @@ Spectacle remembers where every window was prior to executing a window action. T
 
 ## Common Issues
 
-### Spectacle is requesting access to use accessibility features
+### Shortcuts do nothing at all
 
-Apple's [OS X Accessibility Protocol][4] makes Spectacle possible. This protocol allows assistive applications to _drive the user interface of another application running in OS X_. In order to do its job Spectacle must be granted access to use these accessibility features. Instructions to do so will be displayed if Spectacle determines it does not have sufficient privileges.
+Almost always the Accessibility permission. macOS reports no error when it is missing — every
+accessibility call simply fails with `kAXErrorAPIDisabled` and the shortcuts look broken.
+
+Grant it in **System Settings › Privacy & Security › Accessibility**. Spectacle asks for it on
+first launch and adds itself to that list; the status item has an **Accessibility Permission…**
+item that takes you straight there.
+
+This build is ad-hoc signed, so the permission is tied to the exact binary. After rebuilding the
+app, the entry in System Settings can stay switched on while no longer matching anything. If the
+switch is already on and shortcuts still do nothing, remove Spectacle with the “−” button, add it
+back from `/Applications`, and reopen the app.
+
+To check the state from a terminal:
+
+    $ SPECTACLE_PRINT_PERMISSIONS=1 /Applications/Spectacle.app/Contents/MacOS/Spectacle
+    accessibility_trusted=1
 
 ### Spectacle does not resize a particular window as expected
 

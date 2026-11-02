@@ -25,10 +25,18 @@
   NSSet<NSString *> *_blacklistedApplications;
   NSMutableSet<NSString *> *_disabledApplications;
   BOOL _shortcutsAreDisabledForAnHour;
+  BOOL _isPresentingAccessibilityPermissionAlert;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification
 {
+  // Small self-check so a user can tell whether the Accessibility permission actually took
+  // effect: `SPECTACLE_PRINT_PERMISSIONS=1 /Applications/Spectacle.app/Contents/MacOS/Spectacle`
+  if (getenv("SPECTACLE_PRINT_PERMISSIONS")) {
+    printf("accessibility_trusted=%d\n", AXIsProcessTrusted() ? 1 : 0);
+    fflush(stdout);
+    exit(0);
+  }
   NSNotificationCenter *notificationCenter = [NSNotificationCenter defaultCenter];
   NSNotificationCenter *workspaceNotificationCenter = [NSWorkspace sharedWorkspace].notificationCenter;
   [notificationCenter addObserver:self
@@ -54,6 +62,10 @@
   [notificationCenter addObserver:self
                          selector:@selector(inputSourceSelectionDidChange)
                              name:NSTextInputContextKeyboardSelectionDidChangeNotification
+                           object:nil];
+  [notificationCenter addObserver:self
+                         selector:@selector(accessibilityPermissionDidGoMissing)
+                             name:@"SpectacleAccessibilityPermissionMissingNotification"
                            object:nil];
   [workspaceNotificationCenter addObserver:self
                                   selector:@selector(applicationDidActivate:)
@@ -115,9 +127,7 @@
     [self checkForUpdatesWithUserInteraction:NO];
   }
   [self updateShortcutMenuItems];
-  if (!AXIsProcessTrustedWithOptions(NULL)) {
-    [[NSApplication sharedApplication] runModalForWindow:self.accessiblityAccessDialogWindow];
-  }
+  [self requestAccessibilityPermissionIfNeeded];
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)application hasVisibleWindows:(BOOL)visibleWindows
@@ -278,6 +288,11 @@
 {
   [[NSApplication sharedApplication] stopModal];
   [self.accessiblityAccessDialogWindow orderOut:self];
+  [self openAccessibilitySettings];
+}
+
+- (void)openAccessibilitySettings
+{
   NSWorkspace *sharedWorkspace = [NSWorkspace sharedWorkspace];
   // macOS 13 and later no longer ships the Security preference pane, so the deep link is the
   // only reliable way of taking the user straight to the Accessibility privacy settings.
@@ -294,6 +309,43 @@
   if (preferencePanePath) {
     [sharedWorkspace openURL:[NSURL fileURLWithPath:preferencePanePath]];
   }
+}
+
+- (void)requestAccessibilityPermissionIfNeeded
+{
+  if (AXIsProcessTrusted()) {
+    return;
+  }
+  // Passing the prompt option is what makes macOS register Spectacle in the list under System
+  // Settings › Privacy & Security › Accessibility. Checking with a NULL dictionary, as this app
+  // used to do, only reports the current state: the app never shows up in that list, users never
+  // grant the permission, and every shortcut silently does nothing.
+  NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
+  AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+}
+
+- (void)accessibilityPermissionDidGoMissing
+{
+  if (_isPresentingAccessibilityPermissionAlert) {
+    return;
+  }
+  _isPresentingAccessibilityPermissionAlert = YES;
+  NSAlert *alert = [NSAlert new];
+  alert.messageText = @"Spectacle needs Accessibility access";
+  alert.informativeText = @"macOS does not let an app move other apps' windows until it has been granted Accessibility access, so the shortcuts currently do nothing.\n\n1. Open System Settings › Privacy & Security › Accessibility.\n2. Switch Spectacle on. If Spectacle is already listed and switched on, remove it with the “−” button and add it back from /Applications — the stored entry stops matching once the app is rebuilt.\n3. Quit Spectacle and open it again.";
+  [alert addButtonWithTitle:@"Open System Settings"];
+  [alert addButtonWithTitle:@"Later"];
+  [NSApp activateIgnoringOtherApps:YES];
+  NSModalResponse response = [alert runModal];
+  _isPresentingAccessibilityPermissionAlert = NO;
+  if (response == NSAlertFirstButtonReturn) {
+    [self openAccessibilitySettings];
+  }
+}
+
+- (IBAction)showAccessibilityPermissionHelp:(id)sender
+{
+  [self openAccessibilitySettings];
 }
 
 - (void)dealloc
@@ -323,6 +375,22 @@
   _statusItem.button.image = statusImage;
   _statusItem.menu = _statusItemMenu;
   _statusItem.button.toolTip = [@"Spectacle " stringByAppendingString:SpectacleUtilities.applicationVersion];
+  [self insertAccessibilityPermissionMenuItem];
+}
+
+- (void)insertAccessibilityPermissionMenuItem
+{
+  static const NSInteger accessibilityMenuTag = 9871;
+  if ([_statusItemMenu itemWithTag:accessibilityMenuTag]) {
+    return;
+  }
+  NSMenuItem *menuItem = [[NSMenuItem alloc] initWithTitle:@"Accessibility Permission…"
+                                                    action:@selector(showAccessibilityPermissionHelp:)
+                                             keyEquivalent:@""];
+  menuItem.tag = accessibilityMenuTag;
+  menuItem.target = self;
+  NSInteger indexOfUpdateItem = [_statusItemMenu indexOfItemWithTitle:@"Check for Updates..."];
+  [_statusItemMenu insertItem:menuItem atIndex:(indexOfUpdateItem == -1 ? 1 : indexOfUpdateItem + 1)];
 }
 
 - (void)disableStatusItem

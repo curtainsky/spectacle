@@ -120,6 +120,13 @@
 - (void)moveFrontmostWindowElement:(SpectacleAccessibilityElement *)frontmostWindowElement
                             action:(SpectacleWindowAction *)action
 {
+  // Without the Accessibility permission every AX call fails with kAXErrorAPIDisabled and the
+  // shortcuts appear to do nothing at all, so surface the problem instead of failing silently.
+  if (!AXIsProcessTrusted()) {
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"SpectacleAccessibilityPermissionMissingNotification"
+                                                        object:nil];
+    return;
+  }
   if (SpectacleIsUndoWindowAction(action)) {
     [self undoLastWindowAction];
   } else if (SpectacleIsRedoWindowAction(action)) {
