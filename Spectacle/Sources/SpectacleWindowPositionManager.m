@@ -72,7 +72,10 @@
     visibleFrameOfDestinationScreen = NSRectToCGRect([screenDetectionResult.destinationScreen visibleFrame]);
     visibleFrameOfSourceScreen = NSRectToCGRect([screenDetectionResult.sourceScreen visibleFrame]);
   }
-  CGRect frontmostWindowRect = [frontmostWindowElement rectOfElement];
+  // Where the window is, or where it is on its way to: a press that arrives while the previous one
+  // is still being applied has to continue from the rectangle it asked for, not from the middle of
+  // the transition.
+  CGRect frontmostWindowRect = [frontmostWindowElement currentRectOfElement];
   CGRect previousFrontmostWindowRect = CGRectNull;
   if ([frontmostWindowElement isSheet]
       || [frontmostWindowElement isSystemDialog]

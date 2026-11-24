@@ -115,11 +115,15 @@ To work around the limitations imposed on Terminal windows Spectacle will first 
 
 ### Windows that reflow asynchronously
 
-Some applications, notably the Qt-based ones such as WPS, apply a size change in their own time and
-discard a position change that arrives in the same batch. Spectacle detects this on first use and
-remembers the application: from then on it moves the window first, confirms the move, and only then
-resizes, which keeps the transition to two steps instead of a series of corrections. Set
-`SPECTACLE_TRACE=1` in the environment when launching the app to log every step with a timestamp.
+Some applications, notably the Qt-based ones such as WPS, apply a frame change in their own time:
+they coalesce updates for about a quarter of a second, discard one of two attributes that arrive in
+the same batch, and compute a resize against the last frame they committed. Writing to such a window
+on a short timer makes it oscillate, because every request is computed from a frame that is still
+changing. Spectacle detects these applications on first use and remembers them: from then on it writes
+one attribute at a time - moving first when the window has to grow, resizing first when it has to
+shrink - and leaves the window alone until it has committed the previous write. The transition costs
+one extra step, and nothing else. Set `SPECTACLE_TRACE=1` in the environment when launching the app to
+log every step with a timestamp.
 
 ### Spectacle does not work with all applications
 

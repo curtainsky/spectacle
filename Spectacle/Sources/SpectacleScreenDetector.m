@@ -11,7 +11,7 @@
                                           mainScreen:(NSScreen *)mainScreen
 {
   NSArray<NSScreen *> *screensInConsistentOrder = [self screensInConsistentOrder:screens];
-  NSScreen *sourceScreen = [self screenContainingRect:[frontmostWindowElement rectOfElement]
+  NSScreen *sourceScreen = [self screenContainingRect:[frontmostWindowElement currentRectOfElement]
                                               screens:screensInConsistentOrder
                                            mainScreen:mainScreen];
   NSScreen *destinationScreen = sourceScreen;
