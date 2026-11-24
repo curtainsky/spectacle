@@ -37,6 +37,12 @@ frontmostWindowElement:(SpectacleAccessibilityElement *)frontmostWindowElement
                visibleFrameOfScreen:visibleFrameOfScreen
              frontmostWindowElement:frontmostWindowElement
                              action:action];
+  // The requested rectangle comes from the visible frame of the destination screen and the window
+  // element keeps working towards it after this call, so clamping against a rectangle read mid
+  // transition would drag the window back and forth.
+  if ([frontmostWindowElement hasPendingRectUpdate]) {
+    return;
+  }
   CGRect movedWindowRect = [frontmostWindowElement rectOfElement];
   CGRect previouslyMovedWindowRect = movedWindowRect;
   if (movedWindowRect.origin.x < visibleFrameOfScreen.origin.x) {

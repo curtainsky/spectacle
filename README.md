@@ -111,7 +111,15 @@ As an example suppose a display has a 2880x1800 resolution and a window is being
 
 Terminal (and other terminal emulation applications like iTerm 2) place constraints on how windows are resized so entire rows and columns are always visible. This behavior works great since it guarantees no rows or columns are truncated. Unfortunately it does mean that Spectacle needs to do some extra work to make these windows fit.
 
-To work around the limitations imposed on Terminal windows Spectacle will first try to resize a window to match the desired dimensions. If a window cannot be resized to fit Spectacle will immediately try to make the window a little smaller. This process is repeated until the window can be made to fit with its constraints still in place. The result is a window that is centered within the desired dimensions at the cost of a slightly jittery experience.
+To work around the limitations imposed on Terminal windows Spectacle will first try to resize a window to match the desired dimensions. If a window cannot be resized to fit Spectacle will immediately try to make the window a little smaller. This process is repeated until the window can be made to fit with its constraints still in place. The result is a window that is centered within the desired dimensions.
+
+### Windows that reflow asynchronously
+
+Some applications, notably the Qt-based ones such as WPS, apply a size change in their own time and
+discard a position change that arrives in the same batch. Spectacle detects this on first use and
+remembers the application: from then on it moves the window first, confirms the move, and only then
+resizes, which keeps the transition to two steps instead of a series of corrections. Set
+`SPECTACLE_TRACE=1` in the environment when launching the app to log every step with a timestamp.
 
 ### Spectacle does not work with all applications
 

@@ -5,8 +5,14 @@
 @implementation SpectacleAccessibilityElement
 {
   AXUIElementRef _underlyingElement;
-  NSUInteger _rectCorrectionGeneration;
+  BOOL _rectUpdatePending;
 }
+
+// One counter for every window update, not one per element: a fresh element is created for every
+// shortcut press, and an in-flight update started by a previous element has to be able to tell that
+// it has been superseded. Without that, the two updates alternate and the window visibly bounces
+// between the old and the new rectangle.
+static NSUInteger SpectacleRectUpdateGeneration = 0;
 
 static BOOL SpectacleRectsAreClose(CGRect rect1, CGRect rect2)
 {
@@ -16,15 +22,60 @@ static BOOL SpectacleRectsAreClose(CGRect rect1, CGRect rect2)
       && fabs(rect1.size.height - rect2.size.height) <= 1.0;
 }
 
-// Windows that resize asynchronously (Qt-based applications such as WPS, and anything else that
-// reflows off the main thread) swallow part of a geometry update, so tell those apart from a
-// window that simply has a minimum size and never reached the requested rectangle.
-static BOOL SpectacleRectMismatchIsSignificant(CGRect currentRect, CGRect targetRect)
+static BOOL SpectacleSizeIsClose(CGRect rect1, CGRect rect2)
 {
-  return fabs(currentRect.origin.x - targetRect.origin.x) > 20.0
-      || fabs(currentRect.origin.y - targetRect.origin.y) > 20.0
-      || fabs(currentRect.size.width - targetRect.size.width) > 20.0
-      || fabs(currentRect.size.height - targetRect.size.height) > 20.0;
+  return fabs(rect1.size.width - rect2.size.width) <= 1.0 && fabs(rect1.size.height - rect2.size.height) <= 1.0;
+}
+
+static BOOL SpectaclePositionIsClose(CGRect rect1, CGRect rect2)
+{
+  return fabs(rect1.origin.x - rect2.origin.x) <= 1.0 && fabs(rect1.origin.y - rect2.origin.y) <= 1.0;
+}
+
+static BOOL SpectaclePositionIsOff(CGRect rect1, CGRect rect2)
+{
+  return !SpectaclePositionIsClose(rect1, rect2);
+}
+
+static BOOL SpectacleSizeIsOff(CGRect rect1, CGRect rect2)
+{
+  return !SpectacleSizeIsClose(rect1, rect2);
+}
+
+// Diagnostics for tuning the transition: SPECTACLE_TRACE=1 prints every step with a timestamp.
+static BOOL SpectacleTraceEnabled(void)
+{
+  static BOOL enabled;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    enabled = getenv("SPECTACLE_TRACE") != NULL;
+  });
+  return enabled;
+}
+
+static NSString *SpectacleDescribeRect(CGRect rect)
+{
+  if (CGRectIsNull(rect)) {
+    return @"<null>";
+  }
+  return [NSString stringWithFormat:@"(%.0f,%.0f %.0fx%.0f)", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height];
+}
+
+static void SpectacleTrace(NSString *format, ...)
+{
+  if (!SpectacleTraceEnabled()) {
+    return;
+  }
+  static CFAbsoluteTime referenceTime;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    referenceTime = CFAbsoluteTimeGetCurrent();
+  });
+  va_list arguments;
+  va_start(arguments, format);
+  NSString *message = [[NSString alloc] initWithFormat:format arguments:arguments];
+  va_end(arguments);
+  NSLog(@"[trace %7.1fms] %@", (CFAbsoluteTimeGetCurrent() - referenceTime) * 1000.0, message);
 }
 
 - (instancetype)init
@@ -131,29 +182,76 @@ static BOOL SpectacleRectMismatchIsSignificant(CGRect currentRect, CGRect target
   return result;
 }
 
+// Applications that reflow asynchronously (Qt-based ones such as WPS) apply a resize in their own
+// time and throw away a position update that arrives in the same batch. They are remembered, so the
+// extra step is only paid once per application instead of on every shortcut.
+static NSMutableSet<NSString *> *SpectacleTwoPhaseApplicationIdentifiers(void)
+{
+  static NSMutableSet *identifiers;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    NSArray *stored = [[NSUserDefaults standardUserDefaults] arrayForKey:@"SpectacleTwoPhaseApplicationIdentifiers"];
+    identifiers = [NSMutableSet setWithArray:stored ?: @[]];
+  });
+  return identifiers;
+}
+
+static void SpectacleRememberTwoPhaseApplication(NSString *identifier)
+{
+  if (identifier.length == 0 || [SpectacleTwoPhaseApplicationIdentifiers() containsObject:identifier]) {
+    return;
+  }
+  NSMutableSet *identifiers = SpectacleTwoPhaseApplicationIdentifiers();
+  [identifiers addObject:identifier];
+  [[NSUserDefaults standardUserDefaults] setObject:identifiers.allObjects
+                                            forKey:@"SpectacleTwoPhaseApplicationIdentifiers"];
+  SpectacleTrace(@"remembering %@ as needing a move before a resize", identifier);
+}
+
+- (NSString *)applicationBundleIdentifier
+{
+  pid_t processIdentifier = 0;
+  if (AXUIElementGetPid(_underlyingElement, &processIdentifier) != kAXErrorSuccess || processIdentifier <= 0) {
+    return nil;
+  }
+  return [NSRunningApplication runningApplicationWithProcessIdentifier:processIdentifier].bundleIdentifier;
+}
+
 - (void)setRectOfElement:(CGRect)rect
 {
-  NSUInteger generation = ++_rectCorrectionGeneration;
-  // Fast path: move, resize, move again. Standard AppKit windows land exactly where asked and
-  // never reach the stepwise correction below.
-  CGPoint origin = rect.origin;
-  CGSize size = rect.size;
-  AXValueRef positionRef = AXValueCreate(kAXValueCGPointType, &origin);
-  AXValueRef sizeRef = AXValueCreate(kAXValueCGSizeType, &size);
-  [self setValue:positionRef forAttribute:kAXPositionAttribute];
-  [self setValue:sizeRef forAttribute:kAXSizeAttribute];
-  [self setValue:positionRef forAttribute:kAXPositionAttribute];
-  CFRelease(positionRef);
-  CFRelease(sizeRef);
-  // Some windows resize asynchronously (Qt-based applications such as WPS, and anything that
-  // reflows off the main thread). They drop the size update while the position is still
-  // changing, and re-anchor themselves mid-resize, so the fast path leaves them the wrong size
-  // and in the wrong place. Those updates have to be spaced out to take effect.
-  [self scheduleStepwiseCorrectionToRect:rect generation:generation round:0];
+  if (CGRectIsNull(rect) || CGRectIsEmpty(rect)) {
+    return;
+  }
+  NSUInteger generation = ++SpectacleRectUpdateGeneration;
+  _rectUpdatePending = YES;
+  SpectacleTrace(@"set %@ (was %@)", SpectacleDescribeRect(rect), SpectacleDescribeRect([self rectOfElement]));
+  NSString *applicationBundleIdentifier = [self applicationBundleIdentifier];
+  [self applyPositionOfRect:rect];
+  if (applicationBundleIdentifier
+      && [SpectacleTwoPhaseApplicationIdentifiers() containsObject:applicationBundleIdentifier]) {
+    // Known to drop a resize that arrives while it is being moved: wait for the move to land first.
+    [self confirmPositionOfRect:rect generation:generation attempt:0];
+    return;
+  }
+  // Everything else gets the whole rectangle in one run loop turn, which the window shows as a
+  // single step. If the application turns out to drop the move, the answer is caught below and the
+  // two-phase path is used from then on.
+  CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
+  [self applySizeOfRect:rect];
+  [self confirmResizeOfRect:rect
+                 generation:generation
+                      attempt:0
+               applyDuration:CFAbsoluteTimeGetCurrent() - start];
+}
+
+- (BOOL)hasPendingRectUpdate
+{
+  return _rectUpdatePending;
 }
 
 - (void)applyPositionOfRect:(CGRect)rect
 {
+  SpectacleTrace(@"  apply position %@", SpectacleDescribeRect(rect));
   CGPoint origin = rect.origin;
   AXValueRef positionRef = AXValueCreate(kAXValueCGPointType, &origin);
   [self setValue:positionRef forAttribute:kAXPositionAttribute];
@@ -162,75 +260,105 @@ static BOOL SpectacleRectMismatchIsSignificant(CGRect currentRect, CGRect target
 
 - (void)applySizeOfRect:(CGRect)rect
 {
+  SpectacleTrace(@"  apply size %@", SpectacleDescribeRect(rect));
   CGSize size = rect.size;
   AXValueRef sizeRef = AXValueCreate(kAXValueCGSizeType, &size);
   [self setValue:sizeRef forAttribute:kAXSizeAttribute];
   CFRelease(sizeRef);
 }
 
-- (void)scheduleStepwiseCorrectionToRect:(CGRect)rect generation:(NSUInteger)generation round:(NSUInteger)round
+// Polling interval while waiting for one phase to land: short enough to stay inside a single
+// perceived motion.
+static const NSTimeInterval SpectacleConfirmDelay = 0.02;
+static const NSUInteger SpectacleMaxMoveAttempts = 3;
+static const NSUInteger SpectacleMaxResizeAttempts = 2;
+// An application that spends longer than this applying a resize (Qt-based ones such as WPS block
+// for a few hundred milliseconds while they reflow) is doing the work in its own time. Asking again
+// only means another long block and another visible step, so a single request is enough.
+static const NSTimeInterval SpectacleSlowResizeThreshold = 0.2;
+
+- (void)confirmPositionOfRect:(CGRect)rect generation:(NSUInteger)generation attempt:(NSUInteger)attempt
 {
-  if (round >= 2) {
-    return;
-  }
-  __weak typeof(self) weakSelf = self;
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    typeof(self) strongSelf = weakSelf;
-    if (!strongSelf || strongSelf->_rectCorrectionGeneration != generation) {
+  // The element is held for the duration of the update: it is created per action and is not
+  // otherwise kept alive while the update is in flight.
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(SpectacleConfirmDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    typeof(self) strongSelf = self;
+    if (SpectacleRectUpdateGeneration != generation) {
       return;
     }
     CGRect currentRect = [strongSelf rectOfElement];
-    if (CGRectIsNull(currentRect)
-        || SpectacleRectsAreClose(currentRect, rect)
-        || !SpectacleRectMismatchIsSignificant(currentRect, rect)) {
+    BOOL moved = !CGRectIsNull(currentRect) && !SpectaclePositionIsOff(currentRect, rect);
+    SpectacleTrace(@"move check %lu: %@ (was asked %@)", (unsigned long)attempt,
+                   SpectacleDescribeRect(currentRect), SpectacleDescribeRect(rect));
+    if (moved) {
+      if (SpectacleSizeIsOff(currentRect, rect)) {
+        [strongSelf beginResizeOfRect:rect generation:generation attempt:0];
+      } else {
+        strongSelf->_rectUpdatePending = NO;
+      }
+      return;
+    }
+    if (attempt + 1 >= SpectacleMaxMoveAttempts) {
+      // Move on regardless: the resize is what the user notices, and the position is verified again
+      // after it.
+      SpectacleTrace(@"move did not take after %lu tries, resizing anyway", (unsigned long)(attempt + 1));
+      [strongSelf beginResizeOfRect:rect generation:generation attempt:0];
       return;
     }
     [strongSelf applyPositionOfRect:rect];
-    [strongSelf scheduleSizeStepForRect:rect generation:generation round:round];
+    [strongSelf confirmPositionOfRect:rect generation:generation attempt:attempt + 1];
   });
 }
 
-- (void)scheduleSizeStepForRect:(CGRect)rect generation:(NSUInteger)generation round:(NSUInteger)round
+- (void)beginResizeOfRect:(CGRect)rect generation:(NSUInteger)generation attempt:(NSUInteger)attempt
 {
-  __weak typeof(self) weakSelf = self;
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    typeof(self) strongSelf = weakSelf;
-    if (!strongSelf || strongSelf->_rectCorrectionGeneration != generation) {
-      return;
-    }
-    [strongSelf applySizeOfRect:rect];
-    [strongSelf scheduleFinalPositionStepForRect:rect generation:generation round:round];
-  });
+  CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
+  [self applySizeOfRect:rect];
+  NSTimeInterval applyDuration = CFAbsoluteTimeGetCurrent() - start;
+  [self confirmResizeOfRect:rect generation:generation attempt:attempt applyDuration:applyDuration];
 }
 
-- (void)scheduleFinalPositionStepForRect:(CGRect)rect generation:(NSUInteger)generation round:(NSUInteger)round
+- (void)confirmResizeOfRect:(CGRect)rect
+                 generation:(NSUInteger)generation
+                      attempt:(NSUInteger)attempt
+               applyDuration:(NSTimeInterval)applyDuration
 {
-  __weak typeof(self) weakSelf = self;
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    typeof(self) strongSelf = weakSelf;
-    if (!strongSelf || strongSelf->_rectCorrectionGeneration != generation) {
-      return;
-    }
-    [strongSelf applyPositionOfRect:rect];
-    [strongSelf scheduleVerificationForRect:rect generation:generation round:round];
-  });
-}
-
-- (void)scheduleVerificationForRect:(CGRect)rect generation:(NSUInteger)generation round:(NSUInteger)round
-{
-  __weak typeof(self) weakSelf = self;
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    typeof(self) strongSelf = weakSelf;
-    if (!strongSelf || strongSelf->_rectCorrectionGeneration != generation) {
+  // The element is held for the duration of the update: it is created per action and is not
+  // otherwise kept alive while the update is in flight.
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(SpectacleConfirmDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    typeof(self) strongSelf = self;
+    if (SpectacleRectUpdateGeneration != generation) {
       return;
     }
     CGRect currentRect = [strongSelf rectOfElement];
-    if (CGRectIsNull(currentRect)
-        || SpectacleRectsAreClose(currentRect, rect)
-        || !SpectacleRectMismatchIsSignificant(currentRect, rect)) {
+    if (CGRectIsNull(currentRect) || SpectacleRectsAreClose(currentRect, rect)) {
+      SpectacleTrace(@"resize check %lu: landed %@", (unsigned long)attempt, SpectacleDescribeRect(currentRect));
+      strongSelf->_rectUpdatePending = NO;
       return;
     }
-    [strongSelf scheduleStepwiseCorrectionToRect:rect generation:generation round:round + 1];
+    BOOL positionIsOff = SpectaclePositionIsOff(currentRect, rect);
+    BOOL sizeIsOff = SpectacleSizeIsOff(currentRect, rect);
+    SpectacleTrace(@"resize check %lu: at %@ (size %@, position %@, took %.0fms)", (unsigned long)attempt,
+                   SpectacleDescribeRect(currentRect), sizeIsOff ? @"off" : @"ok", positionIsOff ? @"off" : @"ok",
+                   applyDuration * 1000.0);
+    if (positionIsOff) {
+      // The move was swallowed while the window was resizing. Move first this time, and resize again
+      // once the window is where it belongs.
+      SpectacleRememberTwoPhaseApplication([strongSelf applicationBundleIdentifier]);
+      [strongSelf applyPositionOfRect:rect];
+      [strongSelf confirmPositionOfRect:rect generation:generation attempt:0];
+      return;
+    }
+    // Resizing again is only worthwhile when the application applied the previous request promptly
+    // and still ended up short, which means a clamp rather than work still in progress.
+    BOOL resizeAgain = sizeIsOff
+                    && attempt + 1 < SpectacleMaxResizeAttempts
+                    && applyDuration < SpectacleSlowResizeThreshold;
+    if (resizeAgain) {
+      [strongSelf beginResizeOfRect:rect generation:generation attempt:attempt + 1];
+      return;
+    }
+    strongSelf->_rectUpdatePending = NO;
   });
 }
 

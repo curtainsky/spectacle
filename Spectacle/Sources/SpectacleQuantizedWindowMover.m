@@ -31,17 +31,35 @@
 frontmostWindowElement:(SpectacleAccessibilityElement *)frontmostWindowElement
                 action:(SpectacleWindowAction *)action
 {
+  // A geometry update is still being confirmed, so anything read from the window right now is an
+  // intermediate state rather than the rectangle it will settle on. Correcting against it would
+  // only add visible steps to the transition; the element converges on its own.
+  if ([frontmostWindowElement hasPendingRectUpdate]) {
+    [_innerWindowMover moveWindowRect:windowRect
+                        frameOfScreen:frameOfScreen
+                 visibleFrameOfScreen:visibleFrameOfScreen
+               frontmostWindowElement:frontmostWindowElement
+                               action:action];
+    return;
+  }
   CGRect movedWindowRect = [frontmostWindowElement rectOfElement];
   if (!CGRectEqualToRect(movedWindowRect, windowRect)) {
     CGRect adjustedWindowRect = windowRect;
-    while (movedWindowRect.size.width > windowRect.size.width || movedWindowRect.size.height > windowRect.size.height) {
+    // A window that refuses to shrink below its minimum size keeps reporting the larger size, so
+    // stop after a couple of attempts instead of walking the requested size down step by step.
+    for (NSUInteger attempt = 0; attempt < 2; attempt++) {
+      if (movedWindowRect.size.width <= windowRect.size.width
+          && movedWindowRect.size.height <= windowRect.size.height) {
+        break;
+      }
       if (movedWindowRect.size.width > windowRect.size.width) {
         adjustedWindowRect.size.width -= 2;
       }
       if (movedWindowRect.size.height > windowRect.size.height) {
         adjustedWindowRect.size.height -= 2;
       }
-      if (adjustedWindowRect.size.width < windowRect.size.width * 0.85f || adjustedWindowRect.size.height < windowRect.size.height * 0.85f) {
+      if (adjustedWindowRect.size.width < windowRect.size.width * 0.85f
+          || adjustedWindowRect.size.height < windowRect.size.height * 0.85f) {
         break;
       }
       [frontmostWindowElement setRectOfElement:adjustedWindowRect];
