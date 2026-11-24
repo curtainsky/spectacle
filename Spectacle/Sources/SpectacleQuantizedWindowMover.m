@@ -47,8 +47,10 @@ frontmostWindowElement:(SpectacleAccessibilityElement *)frontmostWindowElement
       [frontmostWindowElement setRectOfElement:adjustedWindowRect];
       movedWindowRect = [frontmostWindowElement rectOfElement];
     }
-    adjustedWindowRect.origin.x += floor((windowRect.size.width - movedWindowRect.size.width) / 2.0f);
-    adjustedWindowRect.origin.y += floor((windowRect.size.height - movedWindowRect.size.height) / 2.0f);
+    // Centre the window inside the requested rectangle rather than nudging its current origin,
+    // which may already have been moved by the window server while it was resizing.
+    adjustedWindowRect.origin.x = windowRect.origin.x + floor((windowRect.size.width - movedWindowRect.size.width) / 2.0f);
+    adjustedWindowRect.origin.y = windowRect.origin.y + floor((windowRect.size.height - movedWindowRect.size.height) / 2.0f);
     [frontmostWindowElement setRectOfElement:adjustedWindowRect];
   }
   [_innerWindowMover moveWindowRect:windowRect

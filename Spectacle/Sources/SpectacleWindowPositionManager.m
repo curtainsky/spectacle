@@ -20,6 +20,7 @@
   NSWorkspace *_sharedWorkspace;
   SpectacleFailureFeedback _failureFeedback;
   id<SpectacleWindowMover> _windowMover;
+  NSUInteger _finalCorrectionGeneration;
 }
 
 - (instancetype)initWithScreenDetector:(SpectacleScreenDetector *)screenDetector
@@ -115,6 +116,35 @@
           visibleFrameOfScreen:visibleFrameOfDestinationScreen
         frontmostWindowElement:frontmostWindowElement
                         action:action];
+  [self scheduleFinalCorrectionToRect:frontmostWindowRect element:frontmostWindowElement];
+}
+
+- (void)scheduleFinalCorrectionToRect:(CGRect)rect element:(SpectacleAccessibilityElement *)element
+{
+  // The movers in the chain re-apply the rectangle as they go, and each of them works from
+  // whatever the window reported at that moment. On windows that resize asynchronously those
+  // intermediate readings are wrong, so the chain can end up settling on a rectangle that was
+  // never asked for. Once everything has had time to settle, put the originally calculated
+  // rectangle back and let the element converge on it.
+  NSUInteger generation = ++_finalCorrectionGeneration;
+  __weak typeof(self) weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    typeof(self) strongSelf = weakSelf;
+    if (!strongSelf || strongSelf->_finalCorrectionGeneration != generation) {
+      return;
+    }
+    CGRect currentRect = [element rectOfElement];
+    if (CGRectIsNull(currentRect)) {
+      return;
+    }
+    if (fabs(currentRect.origin.x - rect.origin.x) <= 4.0
+        && fabs(currentRect.origin.y - rect.origin.y) <= 4.0
+        && fabs(currentRect.size.width - rect.size.width) <= 4.0
+        && fabs(currentRect.size.height - rect.size.height) <= 4.0) {
+      return;
+    }
+    [element setRectOfElement:rect];
+  });
 }
 
 - (void)moveFrontmostWindowElement:(SpectacleAccessibilityElement *)frontmostWindowElement

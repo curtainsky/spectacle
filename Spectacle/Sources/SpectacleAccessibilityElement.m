@@ -5,6 +5,26 @@
 @implementation SpectacleAccessibilityElement
 {
   AXUIElementRef _underlyingElement;
+  NSUInteger _rectCorrectionGeneration;
+}
+
+static BOOL SpectacleRectsAreClose(CGRect rect1, CGRect rect2)
+{
+  return fabs(rect1.origin.x - rect2.origin.x) <= 1.0
+      && fabs(rect1.origin.y - rect2.origin.y) <= 1.0
+      && fabs(rect1.size.width - rect2.size.width) <= 1.0
+      && fabs(rect1.size.height - rect2.size.height) <= 1.0;
+}
+
+// Windows that resize asynchronously (Qt-based applications such as WPS, and anything else that
+// reflows off the main thread) swallow part of a geometry update, so tell those apart from a
+// window that simply has a minimum size and never reached the requested rectangle.
+static BOOL SpectacleRectMismatchIsSignificant(CGRect currentRect, CGRect targetRect)
+{
+  return fabs(currentRect.origin.x - targetRect.origin.x) > 20.0
+      || fabs(currentRect.origin.y - targetRect.origin.y) > 20.0
+      || fabs(currentRect.size.width - targetRect.size.width) > 20.0
+      || fabs(currentRect.size.height - targetRect.size.height) > 20.0;
 }
 
 - (instancetype)init
@@ -113,15 +133,105 @@
 
 - (void)setRectOfElement:(CGRect)rect
 {
-  AXValueRef positionRef;
-  AXValueRef sizeRef;
-  positionRef = AXValueCreate(kAXValueCGPointType, (const void *)&rect.origin);
-  sizeRef = AXValueCreate(kAXValueCGSizeType, (const void *)&rect.size);
-  [self setValue:sizeRef forAttribute:kAXSizeAttribute];
+  NSUInteger generation = ++_rectCorrectionGeneration;
+  // Fast path: move, resize, move again. Standard AppKit windows land exactly where asked and
+  // never reach the stepwise correction below.
+  CGPoint origin = rect.origin;
+  CGSize size = rect.size;
+  AXValueRef positionRef = AXValueCreate(kAXValueCGPointType, &origin);
+  AXValueRef sizeRef = AXValueCreate(kAXValueCGSizeType, &size);
   [self setValue:positionRef forAttribute:kAXPositionAttribute];
   [self setValue:sizeRef forAttribute:kAXSizeAttribute];
+  [self setValue:positionRef forAttribute:kAXPositionAttribute];
   CFRelease(positionRef);
   CFRelease(sizeRef);
+  // Some windows resize asynchronously (Qt-based applications such as WPS, and anything that
+  // reflows off the main thread). They drop the size update while the position is still
+  // changing, and re-anchor themselves mid-resize, so the fast path leaves them the wrong size
+  // and in the wrong place. Those updates have to be spaced out to take effect.
+  [self scheduleStepwiseCorrectionToRect:rect generation:generation round:0];
+}
+
+- (void)applyPositionOfRect:(CGRect)rect
+{
+  CGPoint origin = rect.origin;
+  AXValueRef positionRef = AXValueCreate(kAXValueCGPointType, &origin);
+  [self setValue:positionRef forAttribute:kAXPositionAttribute];
+  CFRelease(positionRef);
+}
+
+- (void)applySizeOfRect:(CGRect)rect
+{
+  CGSize size = rect.size;
+  AXValueRef sizeRef = AXValueCreate(kAXValueCGSizeType, &size);
+  [self setValue:sizeRef forAttribute:kAXSizeAttribute];
+  CFRelease(sizeRef);
+}
+
+- (void)scheduleStepwiseCorrectionToRect:(CGRect)rect generation:(NSUInteger)generation round:(NSUInteger)round
+{
+  if (round >= 2) {
+    return;
+  }
+  __weak typeof(self) weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    typeof(self) strongSelf = weakSelf;
+    if (!strongSelf || strongSelf->_rectCorrectionGeneration != generation) {
+      return;
+    }
+    CGRect currentRect = [strongSelf rectOfElement];
+    if (CGRectIsNull(currentRect)
+        || SpectacleRectsAreClose(currentRect, rect)
+        || !SpectacleRectMismatchIsSignificant(currentRect, rect)) {
+      return;
+    }
+    [strongSelf applyPositionOfRect:rect];
+    [strongSelf scheduleSizeStepForRect:rect generation:generation round:round];
+  });
+}
+
+- (void)scheduleSizeStepForRect:(CGRect)rect generation:(NSUInteger)generation round:(NSUInteger)round
+{
+  __weak typeof(self) weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    typeof(self) strongSelf = weakSelf;
+    if (!strongSelf || strongSelf->_rectCorrectionGeneration != generation) {
+      return;
+    }
+    [strongSelf applySizeOfRect:rect];
+    [strongSelf scheduleFinalPositionStepForRect:rect generation:generation round:round];
+  });
+}
+
+- (void)scheduleFinalPositionStepForRect:(CGRect)rect generation:(NSUInteger)generation round:(NSUInteger)round
+{
+  __weak typeof(self) weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    typeof(self) strongSelf = weakSelf;
+    if (!strongSelf || strongSelf->_rectCorrectionGeneration != generation) {
+      return;
+    }
+    [strongSelf applyPositionOfRect:rect];
+    [strongSelf scheduleVerificationForRect:rect generation:generation round:round];
+  });
+}
+
+- (void)scheduleVerificationForRect:(CGRect)rect generation:(NSUInteger)generation round:(NSUInteger)round
+{
+  __weak typeof(self) weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    typeof(self) strongSelf = weakSelf;
+    if (!strongSelf || strongSelf->_rectCorrectionGeneration != generation) {
+      return;
+    }
+    CGRect currentRect = [strongSelf rectOfElement];
+    if (CGRectIsNull(currentRect)
+        || SpectacleRectsAreClose(currentRect, rect)
+        || !SpectacleRectMismatchIsSignificant(currentRect, rect)) {
+      return;
+    }
+    [strongSelf scheduleStepwiseCorrectionToRect:rect generation:generation round:round + 1];
+  });
 }
 
 + (CGRect)normalizeCoordinatesOfRect:(CGRect)rect frameOfScreen:(CGRect)frameOfScreen
